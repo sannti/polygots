@@ -1,0 +1,5 @@
+{
+  "name": "Polygot AI",
+  "description": "A personal language-learning application for creating and studying AI-powered memo cards. Save a word or phrase, and let AI generate translations and example sentences in the languages you know.",
+  "requestFramePermissions": []
+}
