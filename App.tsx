@@ -31,7 +31,12 @@ const App: React.FC = () => {
     })
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-        setSession(session)
+        setSession(session);
+        // After a successful sign-in, Supabase redirects with a hash in the URL.
+        // This cleans the URL, improving the user experience.
+        if (_event === 'SIGNED_IN' && window.location.hash) {
+          window.history.replaceState({}, document.title, window.location.pathname);
+        }
     });
 
     return () => subscription.unsubscribe();
