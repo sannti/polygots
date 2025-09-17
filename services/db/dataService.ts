@@ -2,26 +2,29 @@ import { supabase } from './supabaseClient';
 import type { Card, Settings } from '../../types';
 
 // NOTE TO USER:
-// Before this code can work, you need to set up the following tables in your Supabase project.
+// To support user authentication, your database schema needs to be updated.
 //
-// 1. A table named `cards` with columns:
-//    - `id`: uuid (Primary Key, auto-generated)
-//    - `created_at`: timestamptz (Defaults to `now()`)
-//    - `frontText`: text
-//    - `targetLanguage`: text
-//    - `sourceLanguages`: jsonb (or text[])
-//    - `translations`: jsonb
-//    - `examples`: jsonb
-//    - `notes`: text (nullable)
+// 1. `cards` table:
+//    - Add a `user_id` column of type `uuid`.
+//    - This column should be a foreign key referencing `auth.users(id)`.
+//    - Example SQL: `alter table cards add column user_id uuid references auth.users(id);`
 //
-// 2. A table named `user_settings` with columns:
-//    - `id`: int8 (Primary Key, set it to `1` for the single-user setup)
-//    - `updated_at`: timestamptz
-//    - `targetLanguage`: text
-//    - `sourceLanguages`: jsonb (or text[])
+// 2. `user_settings` table:
+//    - Remove the old `id` column.
+//    - Add a `user_id` column of type `uuid` and set it as the PRIMARY KEY.
+//    - This column should also be a foreign key referencing `auth.users(id)`.
+//    - Example SQL:
+//      `alter table user_settings drop column id;`
+//      `alter table user_settings add column user_id uuid primary key references auth.users(id);`
 //
-// Make sure to enable Row Level Security (RLS) for production use.
-// For this example, we assume RLS is disabled or allows public access.
+// 3. Enable Row Level Security (RLS) on both tables.
+//    - This is CRITICAL for security to ensure users can only access their own data.
+//    - Example RLS Policy for `cards` table:
+//      `create policy "Users can view their own cards." on cards for select using (auth.uid() = user_id);`
+//      `create policy "Users can insert their own cards." on cards for insert with check (auth.uid() = user_id);`
+//      `create policy "Users can update their own cards." on cards for update using (auth.uid() = user_id);`
+//      `create policy "Users can delete their own cards." on cards for delete using (auth.uid() = user_id);`
+//    - Apply similar policies to the `user_settings` table.
 
 
 /**
@@ -42,13 +45,23 @@ const handleSupabaseError = (error: any, context: string): never => {
     throw new Error(error.message || `An unknown database error occurred while ${context}.`);
 }
 
+const getUser = async () => {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) throw new Error("User not authenticated.");
+    return user;
+}
+
 
 // --- Cards API ---
 
 export async function getCards(): Promise<Card[]> {
+    const user = (await supabase.auth.getUser()).data.user;
+    if (!user) return [];
+
     const { data, error } = await supabase
         .from('cards')
         .select('*')
+        .eq('user_id', user.id)
         .order('created_at', { ascending: false });
 
     if (error) {
@@ -58,9 +71,12 @@ export async function getCards(): Promise<Card[]> {
 }
 
 export async function addCard(card: Omit<Card, 'id' | 'created_at'>): Promise<Card> {
+    const user = await getUser();
+    const cardWithUser = { ...card, user_id: user.id };
+
     const { data, error } = await supabase
         .from('cards')
-        .insert([card])
+        .insert([cardWithUser])
         .select()
         .single(); // .single() is important to get the inserted row back as an object
 
@@ -74,10 +90,11 @@ export async function addCard(card: Omit<Card, 'id' | 'created_at'>): Promise<Ca
 }
 
 export async function deleteCard(id: string): Promise<void> {
+    const user = await getUser();
     const { error } = await supabase
         .from('cards')
         .delete()
-        .match({ id });
+        .match({ id: id, user_id: user.id });
 
     if (error) {
         handleSupabaseError(error, 'deleting card');
@@ -87,13 +104,14 @@ export async function deleteCard(id: string): Promise<void> {
 
 // --- Settings API ---
 
-const SETTINGS_ID = 1; // For a single-user setup, we use a fixed row ID.
-
 export async function getSettings(): Promise<Settings | null> {
+    const user = (await supabase.auth.getUser()).data.user;
+    if (!user) return null;
+
     const { data, error } = await supabase
         .from('user_settings')
         .select('targetLanguage, sourceLanguages')
-        .eq('id', SETTINGS_ID)
+        .eq('user_id', user.id)
         .single();
 
     if (error) {
@@ -106,9 +124,12 @@ export async function getSettings(): Promise<Settings | null> {
 }
 
 export async function saveSettings(settings: Settings): Promise<Settings> {
+    const user = await getUser();
+    const settingsWithUser = { ...settings, user_id: user.id };
+        
     const { data, error } = await supabase
         .from('user_settings')
-        .upsert({ id: SETTINGS_ID, ...settings })
+        .upsert(settingsWithUser)
         .select()
         .single();
         
