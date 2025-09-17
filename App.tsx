@@ -3,12 +3,17 @@ import type { Card, Settings } from './types';
 import AddCardForm from './components/AddCardForm';
 import StudyView from './components/StudyView';
 import SettingsView from './components/SettingsView';
-import { PlusIcon, BookOpenIcon, CogIcon, RefreshIcon } from './components/icons';
+import Auth from './components/Auth';
+import { PlusIcon, BookOpenIcon, CogIcon, RefreshIcon, LogOutIcon } from './components/icons';
 import * as dataService from './services/db/dataService';
+import { supabase } from './services/db/supabaseClient';
+import type { Session } from '@supabase/supabase-js';
+
 
 type View = 'study' | 'add' | 'settings';
 
 const App: React.FC = () => {
+  const [session, setSession] = useState<Session | null>(null);
   const [cards, setCards] = useState<Card[]>([]);
   const [view, setView] = useState<View>('study');
   const [settings, setSettings] = useState<Settings>({ 
@@ -19,6 +24,19 @@ const App: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
 
   const defaultSettings: Settings = { targetLanguage: 'es', sourceLanguages: ['en'] };
+  
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setSession(session)
+    })
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+        setSession(session)
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
+
 
   // Load data from Supabase on initial render
   const loadData = useCallback(async () => {
@@ -40,8 +58,10 @@ const App: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    loadData();
-  }, [loadData]);
+    if(session) {
+      loadData();
+    }
+  }, [session, loadData]);
 
 
   const handleAddCard = async (newCardData: Omit<Card, 'id' | 'created_at'>) => {
@@ -81,6 +101,14 @@ const App: React.FC = () => {
     }
   };
   
+  const handleLogout = async () => {
+    const { error } = await supabase.auth.signOut();
+    if(error) {
+        console.error("Error logging out:", error);
+        setError("Failed to log out. Please try again.");
+    }
+  }
+  
   const filteredCards = cards.filter(card => card.targetLanguage === settings.targetLanguage);
 
   const NavButton: React.FC<{
@@ -101,7 +129,7 @@ const App: React.FC = () => {
   );
 
   const renderContent = () => {
-    if(isLoading) {
+    if(isLoading && session) {
       return (
         <div className="flex flex-col items-center justify-center text-center p-8">
             <RefreshIcon className="w-12 h-12 text-gray-500 animate-spin" />
@@ -131,6 +159,10 @@ const App: React.FC = () => {
     }
   }
 
+  if (!session) {
+    return <Auth />;
+  }
+
 
   return (
     <div className="min-h-screen bg-gray-900 text-gray-100 flex flex-col items-center p-4 sm:p-6 lg:p-8">
@@ -141,21 +173,30 @@ const App: React.FC = () => {
         .backface-hidden { backface-visibility: hidden; -webkit-backface-visibility: hidden; }
       `}</style>
       
-      <div className="w-full max-w-md mx-auto mb-8">
-        <nav className="flex justify-center items-center gap-2 bg-gray-800 p-2 rounded-xl shadow-md">
-            <NavButton active={view === 'study'} onClick={() => setView('study')}>
-              <BookOpenIcon className="w-5 h-5" />
-              Study
-            </NavButton>
-            <NavButton active={view === 'add'} onClick={() => setView('add')}>
-              <PlusIcon className="w-5 h-5" />
-              Add Card
-            </NavButton>
-             <NavButton active={view === 'settings'} onClick={() => setView('settings')}>
-              <CogIcon className="w-5 h-5" />
-              Settings
-            </NavButton>
-        </nav>
+      <div className="w-full max-w-lg mx-auto mb-8">
+        <div className="flex items-center gap-2">
+            <nav className="flex-grow flex justify-center items-center gap-2 bg-gray-800 p-2 rounded-xl shadow-md">
+                <NavButton active={view === 'study'} onClick={() => setView('study')}>
+                  <BookOpenIcon className="w-5 h-5" />
+                  Study
+                </NavButton>
+                <NavButton active={view === 'add'} onClick={() => setView('add')}>
+                  <PlusIcon className="w-5 h-5" />
+                  Add Card
+                </NavButton>
+                 <NavButton active={view === 'settings'} onClick={() => setView('settings')}>
+                  <CogIcon className="w-5 h-5" />
+                  Settings
+                </NavButton>
+            </nav>
+            <button
+                onClick={handleLogout}
+                className="p-3 bg-gray-800 rounded-xl shadow-md text-gray-400 hover:bg-gray-700 hover:text-white transition-colors"
+                aria-label="Log Out"
+            >
+                <LogOutIcon className="w-5 h-5" />
+            </button>
+        </div>
       </div>
 
       <main className="w-full max-w-4xl flex-grow flex justify-center">
@@ -163,7 +204,7 @@ const App: React.FC = () => {
       </main>
       
       <footer className="w-full text-center mt-8 text-gray-500 text-sm">
-          <p>Data is securely stored in your Supabase database.</p>
+          <p>Logged in as {session.user.email}</p>
       </footer>
     </div>
   );
